@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neutral Baseline Rating</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f9; color: #333; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .sentence-box { background: #f8f9fa; padding: 20px; margin-bottom: 15px; border-left: 4px solid #007bff; border-radius: 4px; font-size: 1.1em; line-height: 1.5; }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; }
+        button { flex: 1; padding: 15px; font-size: 1.1em; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; color: white; transition: opacity 0.2s; }
+        button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-yes { background-color: #28a745; }
+        .btn-no { background-color: #dc3545; }
+        .btn-unclear { background-color: #6c757d; }
+        .btn-primary { background-color: #007bff; width: 100%; margin-top: 15px; }
+        input[type="text"] { width: 100%; padding: 10px; font-size: 1.1em; margin-top: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        #progress { color: #666; font-size: 0.9em; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;}
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="step-login" class="card">
+        <h2>Welcome to the Rating Task</h2>
+        <p>Please enter your name so your results can be tracked.</p>
+        <input type="text" id="raterName" placeholder="e.g., Jane Doe">
+        <button id="startBtn" class="btn-primary" onclick="initApp()">Load Data & Start</button>
+        <p id="errorMsg" style="color: red; margin-top: 10px;" class="hidden"></p>
+    </div>
+
+    <div id="step-rating" class="card hidden">
+        <div id="progress">Pair 1 of 50</div>
+        <div id="sentence1" class="sentence-box">Loading...</div>
+        <div id="sentence2" class="sentence-box">Loading...</div>
+        
+        <div class="button-group">
+            <button class="btn-yes" onclick="recordRating('Yes')">Yes</button>
+            <button class="btn-no" onclick="recordRating('No')">No</button>
+            <button class="btn-unclear" onclick="recordRating('Unclear')">Unclear</button>
+        </div>
+    </div>
+
+    <div id="step-export" class="card hidden">
+        <h2>Task Complete!</h2>
+        <p>Thank you. Please download your results and send the file back to the project lead.</p>
+        <button class="btn-primary" onclick="exportCSV()">Download My Results</button>
+    </div>
+
+    <script>
+let pairs = [];
+let results = [];
+let currentIndex = 0;
+let raterName = "";
+
+// Standard CSV Parser
+function parseCSV(text) {
+    let result = [], row = [], cell = '', insideQuote = false;
+    for (let i = 0; i < text.length; i++) {
+        let char = text[i], nextChar = text[i + 1];
+        if (char === '"' && insideQuote && nextChar === '"') { cell += '"'; i++; } 
+        else if (char === '"') { insideQuote = !insideQuote; } 
+        else if (char === ',' && !insideQuote) { row.push(cell.trim()); cell = ''; } 
+        else if ((char === '\n' || char === '\r') && !insideQuote) {
+            if (char === '\r' && nextChar === '\n') i++; 
+            row.push(cell.trim());
+            if (row.length >= 1 || row[0] !== '') result.push(row);
+            row = []; cell = '';
+        } 
+        else { cell += char; }
+    }
+    if (cell !== '' || row.length > 0) {
+        row.push(cell.trim());
+        if (row.length >= 1 || row[0] !== '') result.push(row);
+    }
+    return result;
+}
+
+// Save progress to the browser's local storage
+function saveProgress() {
+    const progressData = {
+        currentIndex: currentIndex,
+        results: results
+    };
+    localStorage.setItem(`ratingProgress_${raterName}`, JSON.stringify(progressData));
+}
+
+// Initialize the app, fetch data, and check for saved sessions
+async function initApp() {
+    const nameInput = document.getElementById('raterName').value.trim();
+    const errorMsg = document.getElementById('errorMsg');
+    const startBtn = document.getElementById('startBtn');
+
+    if (!nameInput) {
+        errorMsg.innerText = "Please enter your name to continue.";
+        errorMsg.classList.remove('hidden');
+        return;
+    }
+
+    raterName = nameInput.toLowerCase(); // Standardize name for the storage key
+    startBtn.innerText = "Fetching data...";
+    startBtn.disabled = true;
+
+    try {
+        // Cache buster ensures they get the latest CSV
+        const response = await fetch('data.csv?v=' + new Date().getTime());
+        if (!response.ok) throw new Error("Could not find data.csv");
+        
+        const csvText = await response.text();
+        let parsedData = parseCSV(csvText);
+        
+        // Remove empty rows and the header row
+        parsedData = parsedData.filter(row => row.length > 0 && row[0] !== "");
+        if (parsedData.length > 0) parsedData.shift(); 
+
+        // Filter to ensure we only grab valid rows (checking column 0 and 1)
+        pairs = parsedData.filter(row => row.length >= 2 && row[0] !== "" && row[1] !== "");
+
+        if (pairs.length === 0) throw new Error("The CSV appears to be empty or missing the prompt columns.");
+
+        // Check if this rater already has saved progress
+        const savedData = localStorage.getItem(`ratingProgress_${raterName}`);
+        if (savedData) {
+            const parsedSave = JSON.parse(savedData);
+            currentIndex = parsedSave.currentIndex;
+            results = parsedSave.results;
+            console.log(`Restored session for ${raterName} at index ${currentIndex}`);
+        }
+
+        document.getElementById('step-login').classList.add('hidden');
+        
+        // Route them to the correct screen based on their progress
+        if (currentIndex >= pairs.length) {
+            document.getElementById('step-export').classList.remove('hidden');
+        } else {
+            document.getElementById('step-rating').classList.remove('hidden');
+            showCurrentPair();
+        }
+
+    } catch (error) {
+        errorMsg.innerText = "Error: " + error.message;
+        errorMsg.classList.remove('hidden');
+        startBtn.innerText = "Load Data & Start";
+        startBtn.disabled = false;
+    }
+}
+
+// Display the current original prompt and its neutral baseline
+function showCurrentPair() {
+    document.getElementById('progress').innerText = `Pair ${currentIndex + 1} of ${pairs.length}`;
+    
+    // Index 1 = Original, Index 0 = Neutral
+    document.getElementById('sentence1').innerText = pairs[currentIndex][1];
+    document.getElementById('sentence2').innerText = pairs[currentIndex][0];
+}
+
+// Record the rating, increment the index, and save the session
+function recordRating(rating) {
+    results.push({
+        original: pairs[currentIndex][1],
+        neutral: pairs[currentIndex][0],
+        rating: rating
+    });
+
+    currentIndex++;
+    saveProgress(); // Fire save on every click
+
+    if (currentIndex < pairs.length) {
+        showCurrentPair();
+    } else {
+        document.getElementById('step-rating').classList.add('hidden');
+        document.getElementById('step-export').classList.remove('hidden');
+    }
+}
+
+// Export the results and clear the browser storage
+function exportCSV() {
+    let csvContent = "data:text/csv;charset=utf-8,Original Prompt,Neutral Baseline,Rating\n";
+    
+    results.forEach(row => {
+        let s1 = `"${row.original.replace(/"/g, '""')}"`;
+        let s2 = `"${row.neutral.replace(/"/g, '""')}"`;
+        csvContent += `${s1},${s2},${row.rating}\n`;
+    });
+
+    const safeName = raterName.replace(/[^a-z0-9]/gi, '_');
+    const fileName = `ratings_${safeName}.csv`;
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Clear the stored progress after a successful export
+    localStorage.removeItem(`ratingProgress_${raterName}`);
+}
+    </script>
+</body>
+</html>
