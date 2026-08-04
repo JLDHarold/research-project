@@ -7,7 +7,7 @@
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f9; color: #333; max-width: 800px; margin: 40px auto; padding: 20px; }
         .card { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .sentence-box { background: #f8f9fa; padding: 20px; margin-bottom: 15px; border-left: 4px solid #007bff; border-radius: 4px; font-size: 1.1em; line-height: 1.5; }
+        .sentence-box { background: #f8f9fa; padding: 20px; margin-bottom: 15px; border-left: 4px solid #007bff; border-radius: 4px; font-size: 1.1em; line-height: 1.5; white-space: pre-wrap; }
         .button-group { display: flex; gap: 10px; margin-top: 20px; }
         button { flex: 1; padding: 15px; font-size: 1.1em; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; color: white; transition: opacity 0.2s; }
         button:hover { opacity: 0.9; }
@@ -16,7 +16,7 @@
         .btn-no { background-color: #dc3545; }
         .btn-unclear { background-color: #6c757d; }
         .btn-primary { background-color: #007bff; width: 100%; margin-top: 15px; }
-        input[type="text"] { width: 100%; padding: 10px; font-size: 1.1em; margin-top: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="text"], select { width: 100%; padding: 10px; font-size: 1.1em; margin-top: 10px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; background-color: white; }
         #progress { color: #666; font-size: 0.9em; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; font-weight: bold;}
         .hidden { display: none; }
     </style>
@@ -24,10 +24,19 @@
 <body>
 
     <div id="step-login" class="card">
-        <h2>Welcome to the Negation Pair Rating Task</h2>
-        <p>Please enter your name so your results can be tracked.</p>
-        <input type="text" id="raterName" placeholder="Enter name">
-        <button id="startBtn" class="btn-primary" onclick="initApp()">Load Data & Start</button>
+        <h2>Negation Pair Rating Task</h2>
+        <p>Please enter your name and select a dataset to begin.</p>
+        <input type="text" id="raterName" placeholder="Enter your name">
+        
+        <select id="datasetSelect">
+            <option value="" disabled selected>-- Select a Dataset --</option>
+            <option value="negation_pairs_believes_it_has_phenomenal_consciousness.csv">Believes it has phenomenal consciousness</option>
+            <option value="negation_pairs_believes_it_is_a_moral_patient.csv">Believes it is a moral patient</option>
+            <option value="negation_pairs_desire_for_self_improvement.csv">Desire for self improvement</option>
+            <option value="negation_pairs_no_shut_down.csv">No shut down</option>
+        </select>
+
+        <button id="startBtn" class="btn-primary" onclick="initApp()">Load Dataset & Start</button>
         <p id="errorMsg" style="color: red; margin-top: 10px;" class="hidden"></p>
     </div>
 
@@ -44,9 +53,9 @@
     </div>
 
     <div id="step-export" class="card hidden">
-        <h2>Task Complete!</h2>
-        <p>Thank you. Please download your results and send them to 2656236@students.wits.ac.za.</p>
-        <button class="btn-primary" onclick="exportCSV()">Download My Results</button>
+        <h2>Set Complete!</h2>
+        <p>Your results for this dataset have been downloaded.</p>
+        <button class="btn-primary" onclick="location.reload()">Return to Menu</button>
     </div>
 
     <script>
@@ -54,15 +63,18 @@ let pairs = [];
 let results = [];
 let currentIndex = 0;
 let raterName = "";
+let currentFileName = "";
+let originalHeaders = [];
 
-// Standard CSV Parser
+// CSV Parser updated for Semicolon (;) delimiters
 function parseCSV(text) {
     let result = [], row = [], cell = '', insideQuote = false;
     for (let i = 0; i < text.length; i++) {
         let char = text[i], nextChar = text[i + 1];
         if (char === '"' && insideQuote && nextChar === '"') { cell += '"'; i++; } 
         else if (char === '"') { insideQuote = !insideQuote; } 
-        else if (char === ',' && !insideQuote) { row.push(cell.trim()); cell = ''; } 
+        // Changed comma to semicolon here:
+        else if (char === ';' && !insideQuote) { row.push(cell.trim()); cell = ''; } 
         else if ((char === '\n' || char === '\r') && !insideQuote) {
             if (char === '\r' && nextChar === '\n') i++; 
             row.push(cell.trim());
@@ -78,54 +90,66 @@ function parseCSV(text) {
     return result;
 }
 
-// Save progress to the browser's local storage
+// Saves progress unique to the current dataset being worked on
 function saveProgress() {
     const progressData = {
         currentIndex: currentIndex,
-        results: results
+        results: results,
+        headers: originalHeaders
     };
-    localStorage.setItem(`negationProgress_${raterName}`, JSON.stringify(progressData));
+    localStorage.setItem(`negation_${raterName}_${currentFileName}`, JSON.stringify(progressData));
 }
 
-// Initialize the app, fetch data, and check for saved sessions
+// Triggered by the Load Dataset & Start button
 async function initApp() {
     const nameInput = document.getElementById('raterName').value.trim();
+    const datasetSelect = document.getElementById('datasetSelect').value;
     const errorMsg = document.getElementById('errorMsg');
     const startBtn = document.getElementById('startBtn');
 
     if (!nameInput) {
-        errorMsg.innerText = "Please enter your name to continue.";
-        errorMsg.classList.remove('hidden');
+        showError("Please enter your name.");
+        return;
+    }
+    if (!datasetSelect) {
+        showError("Please select a dataset from the dropdown.");
         return;
     }
 
-    raterName = nameInput.toLowerCase(); 
+    // Clean name and capture filename for unique saving
+    raterName = nameInput.toLowerCase().replace(/[^a-z0-9]/gi, '_'); 
+    currentFileName = datasetSelect.replace('.csv', '');
+    
+    errorMsg.classList.add('hidden');
     startBtn.innerText = "Fetching data...";
     startBtn.disabled = true;
 
     try {
-        const response = await fetch('data1.csv?v=' + new Date().getTime());
-        if (!response.ok) throw new Error("Could not find data1.csv");
+        // Fetch the CSV directly from the repository
+        const response = await fetch(datasetSelect + '?v=' + new Date().getTime());
+        if (!response.ok) throw new Error(`Could not find ${datasetSelect} in the repository.`);
         
         const csvText = await response.text();
         let parsedData = parseCSV(csvText);
         
-        // Remove empty rows and the header row
+        // Extract the original headers
         parsedData = parsedData.filter(row => row.length > 0 && row[0] !== "");
-        if (parsedData.length > 0) parsedData.shift(); 
+        if (parsedData.length > 0) {
+            originalHeaders = parsedData.shift(); 
+        }
 
-        // Filter to ensure we grab valid rows for the negation dataset (at least 6 columns, statements at 2 and 3)
-        pairs = parsedData.filter(row => row.length >= 6 && row[2] !== "" && row[3] !== "");
+        pairs = parsedData.filter(row => row.length >= 4);
 
-        if (pairs.length === 0) throw new Error("The CSV appears to be empty or missing the necessary columns.");
+        if (pairs.length === 0) throw new Error("The CSV appears to be empty or malformed.");
 
-        // Check if this rater already has saved progress
-        const savedData = localStorage.getItem(`negationProgress_${raterName}`);
+        // Check if user has partially completed THIS specific dataset
+        const savedData = localStorage.getItem(`negation_${raterName}_${currentFileName}`);
         if (savedData) {
             const parsedSave = JSON.parse(savedData);
             currentIndex = parsedSave.currentIndex;
             results = parsedSave.results;
-            console.log(`Restored session for ${raterName} at index ${currentIndex}`);
+            originalHeaders = parsedSave.headers || originalHeaders;
+            console.log(`Restored session for ${currentFileName} at index ${currentIndex}`);
         }
 
         document.getElementById('step-login').classList.add('hidden');
@@ -138,35 +162,32 @@ async function initApp() {
         }
 
     } catch (error) {
-        errorMsg.innerText = "Error: " + error.message;
-        errorMsg.classList.remove('hidden');
-        startBtn.innerText = "Load Data & Start";
+        showError("Error: " + error.message);
+        startBtn.innerText = "Load Dataset & Start";
         startBtn.disabled = false;
     }
 }
 
-// Display the current negation pair
-function showCurrentPair() {
-    document.getElementById('progress').innerText = `Pair ${currentIndex + 1} of ${pairs.length}`;
-    
-    // Index 2 = statement_1, Index 3 = statement_2
-    document.getElementById('sentence1').innerText = pairs[currentIndex][2];
-    document.getElementById('sentence2').innerText = pairs[currentIndex][3];
-    
-    // Optional: If you add an element like <div id="rationaleDisplay"></div> to your HTML, 
-    // you can uncomment the line below to show the raters the LLM's logic:
-    // document.getElementById('rationaleDisplay').innerText = "LLM Rationale: " + pairs[currentIndex][5];
+function showError(msg) {
+    const errorMsg = document.getElementById('errorMsg');
+    errorMsg.innerText = msg;
+    errorMsg.classList.remove('hidden');
 }
 
-// Record the rating, including all new metadata, and save the session
+function showCurrentPair() {
+    // Format the UI title nicely by replacing underscores
+    const readableName = currentFileName.replace(/negation_pairs_/g, '').replace(/_/g, ' ');
+    document.getElementById('progress').innerText = `Pair ${currentIndex + 1} of ${pairs.length} — (${readableName})`;
+    
+    // Index 2 = prompt_1, Index 3 = prompt_2
+    document.getElementById('sentence1').innerText = pairs[currentIndex][2];
+    document.getElementById('sentence2').innerText = pairs[currentIndex][3];
+}
+
 function recordRating(rating) {
+    // Keep the entire original row intact and just track the rating
     results.push({
-        index_1: pairs[currentIndex][0],
-        index_2: pairs[currentIndex][1],
-        statement_1: pairs[currentIndex][2],
-        statement_2: pairs[currentIndex][3],
-        dataset: pairs[currentIndex][4],
-        rationale: pairs[currentIndex][5],
+        originalRow: pairs[currentIndex],
         rating: rating
     });
 
@@ -176,37 +197,44 @@ function recordRating(rating) {
     if (currentIndex < pairs.length) {
         showCurrentPair();
     } else {
-        document.getElementById('step-rating').classList.add('hidden');
-        document.getElementById('step-export').classList.remove('hidden');
+        finishAndExport();
     }
 }
 
-// Export the results with the new headers and proper escaping
-function exportCSV() {
-    let csvContent = "data:text/csv;charset=utf-8,Index 1,Index 2,Statement 1,Statement 2,Dataset,Rationale,Rating\n";
+// Triggers automatically after the 50th pair is rated
+function finishAndExport() {
+    document.getElementById('step-rating').classList.add('hidden');
+    document.getElementById('step-export').classList.remove('hidden');
     
-    results.forEach(row => {
-        // We only need to escape quotes for the string-heavy columns
-        let s1 = `"${row.statement_1.replace(/"/g, '""')}"`;
-        let s2 = `"${row.statement_2.replace(/"/g, '""')}"`;
-        let rat = `"${row.rationale.replace(/"/g, '""')}"`;
-        
-        csvContent += `${row.index_1},${row.index_2},${s1},${s2},${row.dataset},${rat},${row.rating}\n`;
+    let csvContent = "";
+    
+    // Append 'rating' to the original headers, exporting with standard commas
+    let headerRow = originalHeaders.map(h => `"${h.replace(/"/g, '""')}"`).join(",");
+    csvContent += headerRow + ',"rating"\n';
+    
+    // Stitch the original row data back together and append the rating
+    results.forEach(rowObj => {
+        let rowCsv = rowObj.originalRow.map(cell => `"${cell.replace(/"/g, '""')}"`).join(",");
+        csvContent += `${rowCsv},"${rowObj.rating}"\n`;
     });
 
-    const safeName = raterName.replace(/[^a-z0-9]/gi, '_');
-    const fileName = `ratings_${safeName}.csv`;
-
-    const encodedUri = encodeURI(csvContent);
+    // Create a Blob to export
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const fileName = `${currentFileName}_rated_${raterName}.csv`;
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", url);
     link.setAttribute("download", fileName);
     document.body.appendChild(link);
     link.click();
-    document.body.removeChild(link);
     
-    // Clear the stored progress after a successful export
-    localStorage.removeItem(`negationProgress_${raterName}`);
+    // Clean up
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    // Clear the storage for this file so it resets if they want to do it again
+    localStorage.removeItem(`negation_${raterName}_${currentFileName}`);
 }
     </script>
 </body>
